@@ -13,7 +13,7 @@ POC version).
    * `Type`: `integer`
    * `Default Value`: `0`
    * Click `Add New Field`
-4. TBC [//]: # (FIX Please add documentation about how to upload the files to the rows)
+4. Add images as attachment to points via Field Maps app. Make sure the same Feature Service Layer is specified in the Notebook code.
 5. Run the code (described in [Code-running](#code-running) section)
 
 
