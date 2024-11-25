@@ -11,7 +11,20 @@ import arcpy
 from arcgis.features import FeatureLayer
 
 
-host = "https://api.celantur.com/v2"
+HOST = "https://api.celantur.com/v2"
+PREDEFINED_TILING = [
+    "pano:4096",
+    "pano:5400",
+    "pano:5640",
+    "pano:7060",
+    "pano:7680",
+    "pano:8000",
+    "pano:7680",
+    "pano:8000",
+    "pano:8192",
+    "pano:11000",
+    "whole",
+]
 
 
 class CelanturAPIClient:
@@ -38,9 +51,7 @@ class CelanturAPIClient:
         self.iterations_before_reauth = self.MAX_ITERATIONS_BEFORE_REAUTH + 1
         self.auth_token: str = None
 
-    def connect(
-        self, force: bool = False
-    ) -> Dict[str, str]:
+    def connect(self, force: bool = False) -> Dict[str, str]:
         """
         Get access token for Celantur Cloud API
         """
@@ -49,8 +60,12 @@ class CelanturAPIClient:
             "password": self._password,
         }
         try:
-            if force or self.auth_token is None or self.iterations_before_reauth >= self.MAX_ITERATIONS_BEFORE_REAUTH:
-                response = requests.post(f"{host}/signin", json=payload, timeout=30)
+            if (
+                force
+                or self.auth_token is None
+                or self.iterations_before_reauth >= self.MAX_ITERATIONS_BEFORE_REAUTH
+            ):
+                response = requests.post(f"{HOST}/signin", json=payload, timeout=30)
                 token = response.json()["AccessToken"]
                 self.std_out(
                     f"User {self._username} successfully authenticated and token received."
@@ -58,20 +73,22 @@ class CelanturAPIClient:
                 self.auth_token = {"Authorization": token}
                 self.iterations_before_reauth = 0
             else:
-                self.std_out(f"Iteration before next authentication: {self.iterations_before_reauth} / {self.MAX_ITERATIONS_BEFORE_REAUTH}")
+                self.std_out(
+                    f"Iteration before next authentication: {self.iterations_before_reauth} / {self.MAX_ITERATIONS_BEFORE_REAUTH}"
+                )
                 self.iterations_before_reauth += 1
             return self.auth_token
         except requests.exceptions.ConnectionError as e:
-            self.err_out(f"Authentication Error: Failed to connect to the host {host}.")
+            self.err_out(f"Authentication Error: Failed to connect to the {HOST}.")
             raise e
         except requests.exceptions.Timeout as e:
-            self.err_out(f"Authentication Error: Request to {host} timed out.")
+            self.err_out(f"Authentication Error: Request to {HOST} timed out.")
             raise e
         except requests.exceptions.RequestException as e:
             self.err_out(f"Authentication Error: HTTP error occurred: {e}")
             raise e
         except (ValueError, KeyError) as e:
-            self.err_out(f"Authentication Error: Failed to parse response from {host}.")
+            self.err_out(f"Authentication Error: Failed to parse response from {HOST}.")
             raise e
         except Exception as e:
             self.err_out(f"Authentication Error: An unexpected error occurred: {e}")
@@ -84,7 +101,7 @@ class CelanturAPIClient:
         res = {}
         for file in files:
             response = requests.post(
-                f"{host}/task",
+                f"{HOST}/task",
                 json=self.parameters,
                 headers=self.auth_token,
                 timeout=30,
@@ -97,9 +114,13 @@ class CelanturAPIClient:
                     file_content = fd.read()
                 requests.put(upload_url, data=file_content, timeout=30)
                 res[task_id] = file
-                self.std_out(f"Image {file} uploaded with following parameters {self.parameters}. Waiting for processing...")
+                self.std_out(
+                    f"Image {file} uploaded with following parameters {self.parameters}. Waiting for processing..."
+                )
             else:
-                raise ValueError(f"Cannot anonymise file {file} due to [{response.status_code}] {response.text} ")
+                raise ValueError(
+                    f"Cannot anonymise file {file} due to [{response.status_code}] {response.text} "
+                )
 
         return res
 
@@ -113,7 +134,9 @@ class CelanturAPIClient:
             result = None
             while keep_checking:
                 response = requests.get(
-                    f"{host}/task/{tid}/status", headers=self.auth_token, timeout=30
+                    f"{HOST}/task/{tid}/status",
+                    headers=self.auth_token,
+                    timeout=30,
                 )
                 result = response.json()
                 if result["task_status"] == "done":
@@ -134,7 +157,9 @@ class CelanturAPIClient:
             try:
                 response = requests.get(result["anonymized_url"], timeout=30)
             except:
-                self.err_out(f'Error: Cannot finish anonymisation with following response: {result}')
+                self.err_out(
+                    f"Error: Cannot finish anonymisation with following response: {result}"
+                )
             final_name = join(self.STORE_OUTPUT_FOLDER, f"anon-{file_name}")
             with open(final_name, "wb") as fd:
                 fd.write(response.content)
@@ -187,9 +212,7 @@ class CelanturAPIClient:
                         layer.edit_features(updates=[feature])
                         remove_file(anon_file)
                     if self.remove_original_image:
-                        layer.attachments.delete(
-                            featureset_id, attachment_id
-                        )
+                        layer.attachments.delete(featureset_id, attachment_id)
                 else:
                     self.std_out(f"Skipping (already anonymized) {attachment_object}\n")
             else:
@@ -364,52 +387,14 @@ class Tool:
 
         self.remove_original_image.value = False
 
-        self.format_type.value = "self-defined"
-        self.format_type.filter.list = ["self-defined"]
+        self.format_type.value = "pre-defined"
+        self.format_type.filter.list = ["pre-defined", "self-defined"]
 
         self.format_value.value = "whole"
 
         self.jpeg_quality.value = 90
         self.jpeg_quality.filter.type = "Range"
         self.jpeg_quality.filter.list = [0, 100]
-
-    def validate_parameters(self, parameters, messages):
-        self.blur_objects = {
-            "face": parameters[2],
-            "license-plate": parameters[3],
-            "person": parameters[4],
-            "vehicle": parameters[5],
-        }
-        self.format_type = parameters[6]
-        self.format_value = parameters[7]
-        self.format_value.value = self.format_value.value.strip()
-
-        # Check that at least one object type is selected for blurring
-        any_object_selected = any(o.value for o in self.blur_objects.values())
-        if not any_object_selected:
-            for o in self.blur_objects:
-                # o.setErrorMessage("At least one object must be selected.")
-                raise ValueError("At least one object must be selected.")
-
-        if self.format_value.value in [
-            "pano:4096",
-            "pano:5400",
-            "pano:5640",
-            "pano:7060",
-            "pano:7680",
-            "pano:8000",
-            "pano:7680",
-            "pano:8000",
-            "pano:8192",
-            "pano:11000",
-            "whole",
-        ] or self.is_valid_json(self.format_value.value):
-            messages.addMessage(f"Format is {self.format_value.value}.")
-        else:
-            # self.format_type.setErrorMessage("Error: Please choose either 'pre-defined' or 'self-defined'.")
-            raise ValueError(
-                f"Error: '{self.format_value.value}' is not a correct tiling format."
-            )
 
     def isLicensed(self):
         """Set whether the tool is licensed to execute."""
@@ -419,7 +404,48 @@ class Tool:
         """Modify the values and properties of parameters before internal
         validation is performed.  This method is called whenever a parameter
         has been changed."""
-        return
+
+        self.format_type = parameters[6]
+        self.format_value = parameters[7]
+        self.format_value.value = self.format_value.value.strip()
+
+        if self.format_type.value == "pre-defined":
+            self.format_value.filter.list = PREDEFINED_TILING
+        elif self.format_type.value == "self-defined":
+            self.format_value.filter.list = []
+        else:
+            # self.format_type.setErrorMessage("Error: Please choose either 'pre-defined' or 'self-defined'.")
+            pass
+
+    def validate_parameters(self, parameters, messages):
+        self.blur_objects = {
+            "face": parameters[2],
+            "license-plate": parameters[3],
+            "person": parameters[4],
+            "vehicle": parameters[5],
+        }
+        self.format_value = parameters[7]
+
+        # Check that at least one object type is selected for blurring
+        any_object_selected = any(o.value for o in self.blur_objects.values())
+        if not any_object_selected:
+            for o in self.blur_objects.values():
+                # o.setErrorMessage("At least one object must be selected.")
+                raise ValueError(
+                    "At least one object (face, license-plate, person, vehicle) must be selected for blurring."
+                )
+
+        if (
+            self.is_valid_json(self.format_value.value)
+            or self.format_value.value in PREDEFINED_TILING
+        ):
+            messages.addMessage(f"Tiling format: {self.format_value.value}")
+        else:
+            # self.format_value.setErrorMessage("Wrong format. See https://doc.celantur.com/container/usage/batch-and-stream-mode#image-format")
+            raise ValueError(
+                f"'{self.format_value.value}' is not a correct tiling format."
+                "See https://doc.celantur.com/container/usage/batch-and-stream-mode#image-format"
+            )
 
     def updateMessages(self, parameters):
         """Modify the messages created by internal validation for each tool
